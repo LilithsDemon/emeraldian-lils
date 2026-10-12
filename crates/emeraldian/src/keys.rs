@@ -173,11 +173,13 @@ fn handle_global(app: &mut App, key: KeyEvent) -> bool {
     // only while a slash command is being typed, where completing it is what
     // the key obviously means.
     let completing = app.focus == Focus::Chat && crate::slash::is_command(&app.chat.input);
-    let owns_tab = matches!(app.focus, Focus::Note | Focus::Graph) || completing;
+    let editing_note = app.focus == Focus::Note && app.editing();
+    let owns_tab = editing_note || app.focus == Focus::Graph || completing;
     if key.code == KeyCode::Tab && !ctrl && !owns_tab {
         cycle_focus(app, 1);
         return true;
     }
+    
     if key.code == KeyCode::BackTab && !owns_tab {
         cycle_focus(app, -1);
         return true;
@@ -833,6 +835,63 @@ mod tests {
         vault.write("B.md", "# B\n");
         let app = App::new(vault.vault(), Config::default()).expect("app");
         (vault, app)
+    }
+
+    #[test]
+    fn tab_cycles_out_of_a_note_being_read() {
+        let (_v, mut app) = app();
+        let a = app.index.id_of_rel("A.md").unwrap();
+        app.open_note(a);
+        app.focus = Focus::Note;
+
+        handle(&mut app, key(KeyCode::Tab));
+        assert_eq!(
+            app.focus,
+            Focus::Sidebar,
+            "reading binds nothing to Tab, so it must keep cycling panes"
+        );
+    }
+
+    #[test]
+    fn shift_tab_cycles_out_of_a_note_being_read() {
+        let (_v, mut app) = app();
+        let a = app.index.id_of_rel("A.md").unwrap();
+        app.open_note(a);
+        app.focus = Focus::Note;
+
+        handle(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.focus, Focus::Explorer);
+    }
+
+    #[test]
+    fn tab_cycles_out_of_an_empty_note_pane() {
+        let (_v, mut app) = app();
+        app.focus = Focus::Note;
+        assert!(app.active().is_none(), "no note is open");
+
+        handle(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Sidebar);
+    }
+
+    #[test]
+    fn tab_still_indents_while_editing() {
+        let (_v, mut app) = app();
+        let a = app.index.id_of_rel("A.md").unwrap();
+        app.open_note(a);
+        app.active_mut().unwrap().mode = Mode::Editing;
+        app.focus = Focus::Note;
+
+        handle(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Note, "the editor keeps Tab for indent");
+        assert!(
+            app.editor_mut()
+                .and_then(|e| e.lines().first().cloned())
+                .is_some_and(|line| line.starts_with(' ')),
+            "Tab indented the line"
+        );
     }
 
     #[test]
